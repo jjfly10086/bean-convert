@@ -13,6 +13,7 @@ public class BeanUtil {
 
     private static ConcurrentMap<String, BeanCopier> beanCopierMap = new ConcurrentHashMap<>();
     private static final Set<Class<?>> wrapClassMap = new HashSet<>(9);
+    private static final Set<Class<?>> specialClassMap = new HashSet<>(2);
 
     static {
         wrapClassMap.add(Boolean.class);
@@ -23,6 +24,9 @@ public class BeanUtil {
         wrapClassMap.add(Integer.class);
         wrapClassMap.add(Long.class);
         wrapClassMap.add(Short.class);
+
+        specialClassMap.add(String.class);
+        specialClassMap.add(Date.class);
     }
 
     public static <T> T convert(Object source, Class<T> targetCls){
@@ -53,9 +57,14 @@ public class BeanUtil {
                 return null;
             }
             // List
-            if(sourceVal instanceof List){
-                List values = (List) sourceVal;
-                List rsList = new ArrayList(values.size());
+            if(sourceVal instanceof Collection){
+                Collection<Object> values = (Collection) sourceVal;
+                Collection<Object> rsCollection = null;
+                if(sourceVal instanceof List){
+                    rsCollection = new ArrayList(values.size());
+                }else if(sourceVal instanceof Set){
+                    rsCollection = new HashSet<>(values.size());
+                }
                 for(Object val : values){
                     String tempFieldName = targetMethodName.toString().replace("set", "");
                     String fieldName = tempFieldName.substring(0, 1).toLowerCase() + tempFieldName.substring(1);
@@ -63,46 +72,51 @@ public class BeanUtil {
                     Class clazz = getElementType(target, fieldName);
                     // 是否为原始类型（boolean、char、byte、short、int、long、float、double）
                     if(clazz.isPrimitive()){
-                        rsList.add(val);
+                        rsCollection.add(val);
                     } else if(isWrapClass(clazz)){
-                        rsList.add(val);
+                        rsCollection.add(val);
+                    } else if(isSpecialClass(clazz)){
+                        rsCollection.add(val);
                     }else{
-                        rsList.add(BeanUtil.convert(val, clazz));
+                        rsCollection.add(BeanUtil.convert(val, clazz));
                     }
                 }
-                return rsList;
-            }
-            // Map
-            if(sourceVal instanceof Map){
-                // TODO
+                return rsCollection;
+            } else if(sourceVal instanceof Map){
+                Map<Object, Object> map = (Map) sourceVal;
+                Map<Object, Object> rsMap = new HashMap<>(map.size());
+                for(Map.Entry<Object,Object> entry : map.entrySet()){
+                    Class keyClazz = entry.getKey().getClass();
+                    Object key = null;
+                    if(keyClazz.isPrimitive() || isWrapClass(keyClazz) || isSpecialClass(keyClazz)){
+                        key = entry.getKey();
+                    }else{
+                        key = BeanUtil.convert(entry.getKey(), keyClazz);
+                    }
+                    Class valueClazz = entry.getValue().getClass();
+                    Object value = null;
+                    if(valueClazz.isPrimitive() || isWrapClass(valueClazz) || isSpecialClass(valueClazz)){
+                        value = entry.getValue();
+                    }else{
+                        value = BeanUtil.convert(entry.getValue(), valueClazz);
+                    }
+                    rsMap.put(key, value);
+                }
+                return rsMap;
+
+            } else if(targetCls.isArray() || targetCls.isPrimitive() || isWrapClass(targetCls) || isSpecialClass(targetCls)){
                 return sourceVal;
-            }
-            // 数组
-            if(targetCls.isArray()){
-                return sourceVal;
-            }
-            // 包装类型
-            if(isWrapClass(targetCls)){
-                return sourceVal;
-            }
-            // String
-            if(sourceVal instanceof String){
-                return new StringBuilder((String) sourceVal).toString();
-            }
-            // Date
-            if(sourceVal instanceof Date){
-                Date d = (Date) sourceVal;
-                return new Date(d.getTime());
-            }
-            // 引用类型
-            if(!targetCls.isPrimitive()){
+
+            } else if(!targetCls.isPrimitive()){
+                // 引用类型
                 return BeanUtil.convert(sourceVal, targetCls);
             }
             return sourceVal;
         }
     }
 
-    public static BeanCopier getBeanCopier(Class<?> sourceCls, Class<?> targetCls){
+
+    private static BeanCopier getBeanCopier(Class<?> sourceCls, Class<?> targetCls){
         String beanCopierKey = generateBeanKey(sourceCls, targetCls);
         if (beanCopierMap.containsKey(beanCopierKey)) {
             return beanCopierMap.get(beanCopierKey);
@@ -114,17 +128,16 @@ public class BeanUtil {
 
     }
 
-
-    public static String generateBeanKey(Class<?> source, Class<?> target) {
+    private static String generateBeanKey(Class<?> source, Class<?> target) {
         return source.getName() + "@" + target.getName();
     }
 
+    private static boolean isWrapClass(Class<?> clazz){
+        return wrapClassMap.contains(clazz);
+    }
 
-    public static boolean isWrapClass(Class<?> clazz){
-        if(wrapClassMap.contains(clazz)){
-            return true;
-        }
-        return false;
+    private static boolean isSpecialClass(Class<?> clazz){
+        return specialClassMap.contains(clazz);
     }
 
     /**
@@ -134,7 +147,7 @@ public class BeanUtil {
      * @return
      * @return Class<?>
      */
-    public static Class<?> getElementType(Class<?> target, String fieldName) {
+    private static Class<?> getElementType(Class<?> target, String fieldName) {
         Class<?> elementTypeClass = null;
         try {
             Type type = target.getDeclaredField(fieldName).getGenericType();
